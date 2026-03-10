@@ -67,6 +67,19 @@ services:
     networks:
       - talentos_net
 
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: always
+    environment:
+      - NGROK_AUTHTOKEN=3AlCel8ztUS6XidO6HCHHy8PBRT_6bBj5BNW7aTswRErHJpnu
+    command: http nginx:80
+    ports:
+      - "4040:4040" # Optional: Access the ngrok dashboard locally
+    depends_on:
+      - nginx
+    networks:
+      - talentos_net
+
 volumes:
   postgres_data:
     driver: local
