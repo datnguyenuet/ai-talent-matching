@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 import anthropic
+import openai
 from google import genai
 from google.genai import types as genai_types
 import fitz
@@ -72,6 +73,16 @@ def get_gemini_client() -> genai.Client:
     if not key:
         raise HTTPException(503, "GEMINI_API_KEY is not configured on the server")
     return genai.Client(api_key=key)
+
+
+# ── OpenAI ────────────────────────────────────────────────
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o").strip()
+
+def get_openai_client() -> openai.OpenAI:
+    key = os.environ.get("OPENAI_API_KEY", "")
+    if not key:
+        raise HTTPException(503, "OPENAI_API_KEY is not configured on the server")
+    return openai.OpenAI(api_key=key)
 
 
 # ════════════════════════════════════════════════════════════
@@ -374,6 +385,17 @@ Return exactly this JSON schema (integers for numeric fields):
                 ),
             )
             raw = (resp.text or "").strip()
+        elif AI_PROVIDER == "openai":
+            oai = get_openai_client()
+            resp = oai.chat.completions.create(
+                model=OPENAI_MODEL,
+                max_tokens=1500,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            raw = (resp.choices[0].message.content or "").strip()
         else:
             client = get_anthropic_client()
             resp = client.messages.create(
@@ -483,7 +505,6 @@ Use **bold** for key terms. Use bullet points for lists. Be specific and actiona
 
     if AI_PROVIDER == "gemini":
         gemini = get_gemini_client()
-        # Build contents list: history + new question
         gemini_contents = [
             genai_types.Content(
                 role="model" if m["role"] == "assistant" else "user",
@@ -510,6 +531,26 @@ Use **bold** for key terms. Use bullet points for lists. Be specific and actiona
                 yield "data: [DONE]\n\n"
             except Exception as exc:
                 yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+
+    elif AI_PROVIDER == "openai":
+        oai = get_openai_client()
+        oai_messages = [{"role": "system", "content": system_prompt}]
+        oai_messages += [{"role": m["role"], "content": m["content"]} for m in history]
+        oai_messages.append({"role": "user", "content": payload.question})
+
+        async def event_stream():
+            try:
+                with oai.chat.completions.stream(
+                    model=OPENAI_MODEL,
+                    max_tokens=1024,
+                    messages=oai_messages,
+                ) as stream:
+                    for chunk in stream.text_stream:
+                        yield f"data: {json.dumps({'delta': chunk})}\n\n"
+                yield "data: [DONE]\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+
     else:
         client = get_anthropic_client()
 
