@@ -1,155 +1,121 @@
-# TalentOS — Recruitment Intelligence Platform
+# TalentOS v3 — Authentication + Role-Based Access
 
-Full-stack recruitment management with PostgreSQL persistence and AI-powered CV matching.
-
-## Quick Start (1 command)
+## Quick Start
 
 ```bash
-# 1. Clone / unzip the project
-cd talentos
-
-# 2. Create your .env file
 cp .env.example .env
-# Edit .env — set your ANTHROPIC_API_KEY
-
-# 3. Launch everything
+# Edit .env: set ANTHROPIC_API_KEY
 docker compose up --build
-
-# App is live at → http://localhost:3000
+# → http://localhost:3000
 ```
 
-That's it. Docker Compose starts PostgreSQL, the FastAPI backend, and Nginx automatically.
+## Default Accounts
+
+| Email               | Password | Role  |
+|---------------------|----------|-------|
+| admin@talentos.ai   | 123456   | Admin |
+
+New sign-ups are assigned the **user** role automatically.
+
+---
+
+## Role Permissions
+
+| Feature               | Admin | User          |
+|-----------------------|-------|---------------|
+| View JDs              | ✅    | ✅            |
+| Preview JD            | ✅    | ✅            |
+| Create / Edit JD      | ✅    | ❌ (API 403)  |
+| Delete JD             | ✅    | ❌ (API 403)  |
+| Upload & analyse CV   | ✅    | ✅ (own only) |
+| View analyses         | ✅ All| ✅ Own only   |
+| AI Chat about JD      | ✅    | ✅            |
+| View user list        | ✅    | ❌            |
+| Dashboard stats       | ✅ All| ✅ Own scope  |
+
+Permissions are enforced **both in the UI and on the API** — protected endpoints return `403 Forbidden` for non-admins.
+
+---
+
+## Authentication
+
+### Local (email + password)
+- `POST /api/auth/signup` — creates a user account
+- `POST /api/auth/signin` — returns a JWT token
+- JWT stored in `localStorage`, sent as `Authorization: Bearer <token>`
+
+### Google OAuth
+1. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` in `.env`
+2. Add `http://localhost:3000/auth/google/callback` as an authorised redirect URI in Google Cloud Console
+3. The **Sign In with Google** button appears automatically
+
+### Token Expiry
+Tokens expire after 24 hours (configurable via `ACCESS_TOKEN_EXPIRE_MINUTES`).
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    docker compose                        │
-│                                                         │
-│  ┌─────────┐    ┌──────────────┐    ┌────────────────┐  │
-│  │  nginx  │───▶│   backend    │───▶│   PostgreSQL   │  │
-│  │  :3000  │    │  FastAPI     │    │   postgres:16  │  │
-│  │  (80)   │    │  :8000       │    │   talentos db  │  │
-│  └─────────┘    └──────────────┘    └────────────────┘  │
-│       │                │                                 │
-│  static SPA      Anthropic API                          │
-│  (Vue 3)         (Claude claude-opus-4-5)                    │
-└─────────────────────────────────────────────────────────┘
+Client (Vue 3 SPA)
+  ↕ JWT in Authorization header
+Nginx :3000
+  ├── /api/* → FastAPI :8000
+  └── /* → static index.html
+
+FastAPI
+  ├── /api/auth/*       — public
+  ├── /api/jds (GET)    — any authenticated user
+  ├── /api/jds (write)  — admin only
+  ├── /api/analyze      — any user (scoped to their user_id)
+  ├── /api/analyses     — admin sees all; user sees own
+  ├── /api/chat         — any authenticated user
+  ├── /api/stats        — scoped by role
+  └── /api/admin/*      — admin only
+
+PostgreSQL
+  ├── users
+  ├── job_descriptions
+  └── cv_analyses (user_id FK → users)
 ```
 
-| Service   | Image                  | Role                              |
-|-----------|------------------------|-----------------------------------|
-| `nginx`   | nginx:1.27-alpine      | Reverse proxy + static files      |
-| `backend` | python:3.12-slim       | FastAPI + SQLAlchemy + Claude AI  |
-| `db`      | postgres:16-alpine     | Persistent data store             |
-
-## Services & Ports
-
-| Service  | Internal port | External (default) |
-|----------|---------------|--------------------|
-| nginx    | 80            | **3000**           |
-| backend  | 8000          | not exposed        |
-| postgres | 5432          | not exposed        |
-
-Change the port in `.env`: `APP_PORT=8080`
-
 ---
 
-## Environment Variables
+## Google OAuth Setup
 
-| Variable            | Required | Default           | Description            |
-|---------------------|----------|-------------------|------------------------|
-| `ANTHROPIC_API_KEY` | ✅ Yes   | —                 | Your Claude API key    |
-| `POSTGRES_PASSWORD` | No       | `talentos_secret` | PostgreSQL password    |
-| `APP_PORT`          | No       | `3000`            | Host port for the app  |
-
----
-
-## Database Schema
-
-### `job_descriptions`
-| Column            | Type        | Notes               |
-|-------------------|-------------|---------------------|
-| id                | UUID (PK)   | auto-generated      |
-| title             | VARCHAR     | indexed             |
-| department        | VARCHAR     |                     |
-| location          | VARCHAR     |                     |
-| type              | VARCHAR     | Full-time, etc.     |
-| experience        | VARCHAR     |                     |
-| salary            | VARCHAR     |                     |
-| status            | VARCHAR     | indexed             |
-| summary           | TEXT        |                     |
-| responsibilities  | TEXT        |                     |
-| requirements      | TEXT        |                     |
-| nice_to_have      | TEXT        |                     |
-| benefits          | TEXT        |                     |
-| skills            | JSON        | array of strings    |
-| created_at        | TIMESTAMPTZ |                     |
-| updated_at        | TIMESTAMPTZ | auto-updated        |
-
-### `cv_analyses`
-| Column          | Type        | Notes                      |
-|-----------------|-------------|----------------------------|
-| id              | UUID (PK)   |                            |
-| jd_id           | UUID (FK)   | → job_descriptions.id      |
-| jd_title        | VARCHAR     | denormalised for speed     |
-| filename        | VARCHAR     | original CV filename       |
-| result          | JSON        | full Claude analysis       |
-| score           | INTEGER     | 0–100, for stats queries   |
-| candidate_name  | VARCHAR     | extracted from CV          |
-| recommendation  | VARCHAR     | strong_yes/yes/maybe/no    |
-| created_at      | TIMESTAMPTZ |                            |
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create / select a project → **APIs & Services → Credentials**
+3. Create **OAuth 2.0 Client ID** (Web application)
+4. Add authorised redirect URI: `http://localhost:3000/auth/google/callback`
+   - For production: `https://yourdomain.com/auth/google/callback`
+5. Copy Client ID and Secret into `.env`
 
 ---
 
 ## API Reference
 
-| Method | Path                  | Description                     |
-|--------|-----------------------|---------------------------------|
-| GET    | `/api/jds`            | List JDs (optional ?status=)    |
-| GET    | `/api/jds/{id}`       | Get single JD                   |
-| POST   | `/api/jds`            | Create JD                       |
-| PUT    | `/api/jds/{id}`       | Update JD                       |
-| DELETE | `/api/jds/{id}`       | Delete JD                       |
-| POST   | `/api/analyze`        | Upload CV + analyse match       |
-| POST   | `/api/chat`           | Streaming SSE chat about JD     |
-| GET    | `/api/stats`          | Dashboard statistics            |
-| GET    | `/api/analyses`       | Analysis history                |
-| GET    | `/health`             | Health check                    |
-| GET    | `/api/docs`           | Swagger UI (dev)                |
+### Auth
+| Method | Path                        | Auth     | Description           |
+|--------|-----------------------------|----------|-----------------------|
+| POST   | `/api/auth/signup`          | None     | Register              |
+| POST   | `/api/auth/signin`          | None     | Login → JWT           |
+| GET    | `/api/auth/me`              | Any      | Current user info     |
+| GET    | `/api/auth/google`          | None     | Get Google OAuth URL  |
+| GET    | `/api/auth/google/callback` | None     | OAuth callback        |
+| GET    | `/api/admin/users`          | Admin    | List all users        |
 
----
+### JDs
+| Method | Path            | Auth  | Description   |
+|--------|-----------------|-------|---------------|
+| GET    | `/api/jds`      | Any   | List JDs      |
+| POST   | `/api/jds`      | Admin | Create JD     |
+| PUT    | `/api/jds/{id}` | Admin | Update JD     |
+| DELETE | `/api/jds/{id}` | Admin | Delete JD     |
 
-## Useful Commands
-
-```bash
-# Start in background
-docker compose up -d --build
-
-# View logs
-docker compose logs -f
-docker compose logs -f backend
-
-# Connect to PostgreSQL
-docker compose exec db psql -U talentos -d talentos
-
-# Stop everything
-docker compose down
-
-# Stop + wipe all data (fresh start)
-docker compose down -v
-```
-
----
-
-## CV Parsing Support
-
-| Format | Parser     | Notes                              |
-|--------|------------|------------------------------------|
-| .pdf   | PyMuPDF    | Text-based PDFs; scanned = fallback|
-| .docx  | python-docx| Full paragraph extraction          |
-| .txt   | UTF-8      | Direct decode                      |
-
-All uploaded CVs are stored in the `uploads_data` Docker volume.
+### Analysis & Chat
+| Method | Path              | Auth | Description         |
+|--------|-------------------|------|---------------------|
+| POST   | `/api/analyze`    | Any  | Upload CV + analyse |
+| GET    | `/api/analyses`   | Any  | History (scoped)    |
+| POST   | `/api/chat`       | Any  | SSE streaming chat  |
+| GET    | `/api/stats`      | Any  | Dashboard stats     |
