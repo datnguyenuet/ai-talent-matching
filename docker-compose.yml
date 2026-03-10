@@ -1,0 +1,78 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL ────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: talentos_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       talentos
+      POSTGRES_USER:     talentos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-talentos_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U talentos -d talentos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - talentos_net
+
+  # ── FastAPI Backend ───────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: talentos_backend
+    restart: unless-stopped
+    ports:
+      - 8000:8000
+    environment:
+      DATABASE_URL:      postgresql+asyncpg://talentos:${POSTGRES_PASSWORD:-talentos_secret}@db:5432/talentos
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY:    ${GEMINI_API_KEY:-}
+      AI_PROVIDER:       ${AI_PROVIDER:-anthropic}
+      GEMINI_MODEL:      ${GEMINI_MODEL:-gemini-2.0-flash}
+      PYTHONUNBUFFERED:  "1"
+    volumes:
+      - uploads_data:/app/uploads
+      - ./frontend:/app/frontend:ro   # serve frontend files via FastAPI fallback
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - talentos_net
+
+  # ── Nginx (reverse proxy + static frontend) ───────────────
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: talentos_nginx
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro  # serve frontend static files
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - talentos_net
+
+volumes:
+  postgres_data:
+    driver: local
+  uploads_data:
+    driver: local
+
+networks:
+  talentos_net:
+    driver: bridge
