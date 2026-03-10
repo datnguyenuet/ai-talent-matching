@@ -7,13 +7,15 @@ services:
     container_name: talentos_db
     restart: unless-stopped
     environment:
-      POSTGRES_DB:       talentos
-      POSTGRES_USER:     talentos
+      POSTGRES_DB: talentos
+      POSTGRES_USER: talentos
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-talentos_secret}
+    ports:
+      - 5444:5432
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U talentos -d talentos"]
+      test: [ "CMD-SHELL", "pg_isready -U talentos -d talentos" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -30,12 +32,17 @@ services:
     ports:
       - 8000:8000
     environment:
-      DATABASE_URL:      postgresql+asyncpg://talentos:${POSTGRES_PASSWORD:-talentos_secret}@db:5432/talentos
+      DATABASE_URL: postgresql+asyncpg://talentos:${POSTGRES_PASSWORD:-talentos_secret}@db:5432/talentos
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      GEMINI_API_KEY:    ${GEMINI_API_KEY:-}
-      AI_PROVIDER:       ${AI_PROVIDER:-anthropic}
-      GEMINI_MODEL:      ${GEMINI_MODEL:-gemini-2.0-flash}
-      PYTHONUNBUFFERED:  "1"
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-anthropic}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      JWT_SECRET: ${JWT_SECRET:-talentos-change-this-secret-in-production}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+      ACCESS_TOKEN_TTL_HOURS: ${ACCESS_TOKEN_TTL_HOURS:-72}
+      PYTHONUNBUFFERED: "1"
     volumes:
       - uploads_data:/app/uploads
       - ./frontend:/app/frontend:ro   # serve frontend files via FastAPI fallback
@@ -43,7 +50,7 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\"" ]
       interval: 10s
       timeout: 5s
       retries: 5
